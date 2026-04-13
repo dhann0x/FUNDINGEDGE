@@ -2,7 +2,10 @@ import {
   MarketPrice,
   MarketWithStats,
   ArbitragePair,
+  CorrelatedArbitragePair,
   MarketStatsSummary,
+  FundingSentimentDivergence,
+  SentimentTrend,
 } from '../types/pacifica';
 import { config } from './config';
 
@@ -178,6 +181,206 @@ export function findArbitragePairs(
   return pairs
     .sort((a, b) => b.spread - a.spread)
     .slice(0, maxPairs);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Price correlation
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Pearson correlation coefficient between two equal-length numeric series.
+ * Returns 0 when either series has zero variance (constant prices).
+ * Range: -1 (perfect inverse) to +1 (perfect positive).
+ */
+export function pearsonCorrelation(x: number[], y: number[]): number {
+  const n = Math.min(x.length, y.length);
+  if (n < 2) return 0;
+
+  const mx = mean(x.slice(0, n));
+  const my = mean(y.slice(0, n));
+
+  let num = 0;
+  let dx = 0;
+  let dy = 0;
+
+  for (let i = 0; i < n; i++) {
+    const xi = x[i] - mx;
+    const yi = y[i] - my;
+    num += xi * yi;
+    dx += xi * xi;
+    dy += yi * yi;
+  }
+
+  if (dx === 0 || dy === 0) return 0;
+  return num / Math.sqrt(dx * dy);
+}
+
+/**
+ * Align two timestamped price series into parallel numeric arrays
+ * by bucketing into `bucketMs` intervals (default 1 hour).
+ *
+ * Both inputs are arrays of { price, ts } sorted newest-first
+ * (matching Pacifica funding history response order).
+ *
+ * Returns only the buckets where BOTH series have data.
+ */
+export function alignPriceSeries(
+  a: { price: number; ts: number }[],
+  b: { price: number; ts: number }[],
+  bucketMs = 60 * 60 * 1_000,
+): { ax: number[]; ay: number[] } {
+  const bucket = (ts: number) => Math.floor(ts / bucketMs) * bucketMs;
+
+  const mapA = new Map<number, number>();
+  for (const { price, ts } of a) mapA.set(bucket(ts), price);
+
+  const ax: number[] = [];
+  const ay: number[] = [];
+
+  for (const { price, ts } of b) {
+    const key = bucket(ts);
+    if (mapA.has(key)) {
+      ax.push(mapA.get(key)!);
+      ay.push(price);
+    }
+  }
+
+  return { ax, ay };
+}
+
+/**
+ * Derive a human-readable risk label from a Pearson correlation.
+ *   r ≥ 0.8  → low risk   (prices closely track each other)
+ *   r ≥ 0.5  → medium risk
+ *   r ≥ 0    → high risk
+ *   r < 0    → uncorrelated (inverse or no relationship)
+ */
+function correlationRiskLabel(r: number): CorrelatedArbitragePair['riskLabel'] {
+  if (r >= 0.8) return 'low';
+  if (r >= 0.5) return 'medium';
+  if (r >= 0) return 'high';
+  return 'uncorrelated';
+}
+
+/**
+ * Enrich an array of ArbitragePairs with price correlation data.
+ *
+ * @param pairs    Base arbitrage pairs (already sorted by spread)
+ * @param histories Map of symbol → { price, ts }[] oracle price series
+ */
+export function enrichPairsWithCorrelation(
+  pairs: ArbitragePair[],
+  histories: Map<string, { price: number; ts: number }[]>,
+): CorrelatedArbitragePair[] {
+  return pairs.map((pair) => {
+    const seriesA = histories.get(pair.longSymbol);
+    const seriesB = histories.get(pair.shortSymbol);
+
+    if (!seriesA || !seriesB || seriesA.length < 2 || seriesB.length < 2) {
+      return {
+        ...pair,
+        correlation: 0,
+        correlationWindow: 0,
+        correlationAdjustedScore: 0,
+        riskLabel: 'uncorrelated' as const,
+      };
+    }
+
+    const { ax, ay } = alignPriceSeries(seriesA, seriesB);
+    const r = pearsonCorrelation(ax, ay);
+
+    return {
+      ...pair,
+      correlation: parseFloat(r.toFixed(4)),
+      correlationWindow: ax.length,
+      // Only positive correlation adds value; negative correlation means
+      // the assets diverge — multiply by 0 to surface it but not rank it up.
+      correlationAdjustedScore: parseFloat(
+        (pair.spreadAnnualized * Math.max(0, r)).toFixed(4),
+      ),
+      riskLabel: correlationRiskLabel(r),
+    };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Funding–sentiment divergence classifier
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Classify the divergence between a market's funding rate and its
+ * Elfa AI social sentiment trend.
+ *
+ * Signal logic (see type definition for full descriptions):
+ *   funding < 0 (shorts paying) + sentiment rising  → SHORT_SQUEEZE_SETUP
+ *   funding > 0 (longs paying)  + sentiment falling → LONG_LIQUIDATION_SETUP
+ *   funding > 0 extreme         + sentiment rising  → OVEREXTENDED_LONG
+ *   funding < 0 extreme         + sentiment falling → OVEREXTENDED_SHORT
+ *   funding > 0 + sentiment rising (mild)           → ALIGNED_BULLISH
+ *   funding < 0 + sentiment falling (mild)          → ALIGNED_BEARISH
+ *   otherwise                                       → NEUTRAL
+ */
+export function classifyDivergence(
+  market: MarketWithStats,
+  trend: SentimentTrend,
+  extremeZThreshold = config.stats.extremeZScoreThreshold,
+): FundingSentimentDivergence {
+  const { fundingRateNum, annualizedRate, zScore: fz } = market;
+  const { trendStrength, trend: trendDir, sentimentScore } = trend.recent
+    ? { trendStrength: trend.trendStrength, trend: trend.trend, sentimentScore: trend.recent.sentimentScore }
+    : { trendStrength: 0, trend: 'flat' as const, sentimentScore: 0 };
+
+  const shortsArePaying = fundingRateNum < 0;
+  const longsArePaying = fundingRateNum > 0;
+  const isExtremeFunding = Math.abs(fz) >= extremeZThreshold;
+  const sentimentRising = trendDir === 'rising';
+  const sentimentFalling = trendDir === 'falling';
+  const strongTrend = Math.abs(trendStrength) >= 0.3;
+
+  // Normalised signal strength: geometric mean of funding extremity and sentiment momentum
+  const signalStrength = parseFloat(
+    Math.min(1, Math.sqrt((Math.min(Math.abs(fz), 4) / 4) * Math.abs(trendStrength))).toFixed(3),
+  );
+
+  let signal: FundingSentimentDivergence['signal'];
+  let explanation: string;
+
+  if (shortsArePaying && sentimentRising && isExtremeFunding) {
+    signal = 'SHORT_SQUEEZE_SETUP';
+    explanation = `Shorts are paying an extreme rate (${annualizedRate.toFixed(1)}% APY) while social sentiment is rising — crowded shorts into bullish momentum is a classic squeeze setup.`;
+  } else if (longsArePaying && sentimentFalling && isExtremeFunding) {
+    signal = 'LONG_LIQUIDATION_SETUP';
+    explanation = `Longs are paying an extreme rate (${annualizedRate.toFixed(1)}% APY) while social sentiment is deteriorating — crowded longs into falling momentum raises long liquidation risk.`;
+  } else if (longsArePaying && sentimentRising && isExtremeFunding && strongTrend) {
+    signal = 'OVEREXTENDED_LONG';
+    explanation = `Both perp positioning and social sentiment are extremely bullish — this level of double-sided overextension often precedes a correction.`;
+  } else if (shortsArePaying && sentimentFalling && isExtremeFunding && strongTrend) {
+    signal = 'OVEREXTENDED_SHORT';
+    explanation = `Both perp positioning and social sentiment are extremely bearish — double-sided overextension to the downside often produces sharp bounces.`;
+  } else if (longsArePaying && sentimentRising) {
+    signal = 'ALIGNED_BULLISH';
+    explanation = `Mild bullish alignment: perp market is net long and social sentiment is improving. No extreme divergence detected.`;
+  } else if (shortsArePaying && sentimentFalling) {
+    signal = 'ALIGNED_BEARISH';
+    explanation = `Mild bearish alignment: perp market is net short and social sentiment is declining. No extreme divergence detected.`;
+  } else {
+    signal = 'NEUTRAL';
+    explanation = `Funding rate and social sentiment are not showing a meaningful divergence at this time.`;
+  }
+
+  return {
+    symbol: market.symbol,
+    fundingRate: fundingRateNum,
+    annualizedRate,
+    fundingZScore: fz,
+    sentimentScore,
+    sentimentTrend: trendDir,
+    trendStrength,
+    signal,
+    signalStrength,
+    explanation,
+    computedAt: Date.now(),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────

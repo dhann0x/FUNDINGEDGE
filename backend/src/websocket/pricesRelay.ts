@@ -61,12 +61,12 @@ export class PricesRelay {
       this.isConnected = true;
 
       // Subscribe to prices channel
-      this.upstream!.send(JSON.stringify({ op: 'subscribe', channel: 'prices' }));
+      this.upstream!.send(JSON.stringify({ method: 'subscribe', params: { channel: 'prices' } }));
 
       // Keep-alive ping every 30 s
       this.pingInterval = setInterval(() => {
         if (this.upstream?.readyState === WebSocket.OPEN) {
-          this.upstream.send(JSON.stringify({ op: 'ping' }));
+          this.upstream.send(JSON.stringify({ method: 'ping' }));
         }
       }, 30_000);
     });
@@ -86,6 +86,7 @@ export class PricesRelay {
       console.warn('[WS] Upstream disconnected – reconnecting in 3 s');
       this.isConnected = false;
       this.clearPing();
+      if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = setTimeout(() => this.connectUpstream(), 3_000);
     });
 

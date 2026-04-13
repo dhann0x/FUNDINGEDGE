@@ -128,6 +128,26 @@ export interface ArbitragePair {
   dailyIncomePerTenK: number;
 }
 
+/**
+ * ArbitragePair enriched with price correlation between the two assets.
+ * A high positive correlation means the pair's prices move together —
+ * reducing the risk that price divergence wipes out the funding edge.
+ */
+export interface CorrelatedArbitragePair extends ArbitragePair {
+  /** Pearson r computed from oracle_price history — range -1 to 1 */
+  correlation: number;
+  /** Number of aligned hourly price records used in the correlation */
+  correlationWindow: number;
+  /**
+   * Primary ranking metric: spreadAnnualized × max(0, correlation).
+   * Pairs with negative or zero correlation score 0 — the funding edge
+   * is real but the price divergence risk is unquantified.
+   */
+  correlationAdjustedScore: number;
+  /** Human-readable risk label derived from correlation */
+  riskLabel: 'low' | 'medium' | 'high' | 'uncorrelated';
+}
+
 /** Summary statistics across all markets (used by Extremes Detector) */
 export interface MarketStatsSummary {
   mean: number;
@@ -147,6 +167,84 @@ export interface SentimentResult {
   /** "bullish" | "bearish" | "neutral" */
   sentiment: string;
   fetchedAt: number;
+}
+
+/** A single point-in-time sentiment snapshot stored for trend calculation */
+export interface SentimentSnapshot {
+  sentimentScore: number;
+  mentionCount: number;
+  /** Label for the window this snapshot covers ("24h" | "7d") */
+  window: string;
+  /** Unix ms – when this snapshot was fetched */
+  fetchedAt: number;
+}
+
+/** Sentiment trend for a symbol derived from comparing two time windows */
+export interface SentimentTrend {
+  symbol: string;
+  /** Most recent 24-hour window */
+  recent: SentimentSnapshot;
+  /** Baseline: previous period (e.g. 7-day average minus last 24h) */
+  baseline: SentimentSnapshot;
+  /** recent.sentimentScore - baseline.sentimentScore */
+  scoreDelta: number;
+  /** Normalised -1 to 1: how strongly the trend is moving */
+  trendStrength: number;
+  /** Direction of the trend */
+  trend: 'rising' | 'falling' | 'flat';
+  fetchedAt: number;
+}
+
+/**
+ * Divergence signal between Elfa sentiment trend and funding rate.
+ * Surfaces setups where social sentiment and perp market positioning disagree.
+ */
+export interface FundingSentimentDivergence {
+  symbol: string;
+  /** Current hourly funding rate */
+  fundingRate: number;
+  annualizedRate: number;
+  /** Cross-market z-score of the funding rate */
+  fundingZScore: number;
+  sentimentScore: number;
+  sentimentTrend: 'rising' | 'falling' | 'flat';
+  trendStrength: number;
+  /**
+   * Trading signal classification:
+   *
+   * SHORT_SQUEEZE_SETUP    – sentiment rising + shorts paying (funding < 0).
+   *                          Perp market is net short but social mood is bullish.
+   *                          Rising price could force short covering.
+   *
+   * LONG_LIQUIDATION_SETUP – sentiment falling + longs paying (funding > 0).
+   *                          Perp market is net long but social mood is turning.
+   *                          Could trigger cascading long exits.
+   *
+   * OVEREXTENDED_LONG      – sentiment rising strongly + longs paying and extreme.
+   *                          Both social hype and perp crowding point the same way.
+   *                          Mean-reversion risk is elevated.
+   *
+   * OVEREXTENDED_SHORT     – sentiment falling strongly + shorts paying and extreme.
+   *                          Both social fear and perp crowding align.
+   *                          Oversold bounce candidate.
+   *
+   * ALIGNED_BULLISH        – mild bullish alignment, no extreme divergence.
+   * ALIGNED_BEARISH        – mild bearish alignment, no extreme divergence.
+   * NEUTRAL                – insufficient divergence to classify.
+   */
+  signal:
+    | 'SHORT_SQUEEZE_SETUP'
+    | 'LONG_LIQUIDATION_SETUP'
+    | 'OVEREXTENDED_LONG'
+    | 'OVEREXTENDED_SHORT'
+    | 'ALIGNED_BULLISH'
+    | 'ALIGNED_BEARISH'
+    | 'NEUTRAL';
+  /** 0–1 composite of |fundingZScore| and |trendStrength| */
+  signalStrength: number;
+  /** One-line plain-English explanation for the frontend to display */
+  explanation: string;
+  computedAt: number;
 }
 
 /** Health check response */

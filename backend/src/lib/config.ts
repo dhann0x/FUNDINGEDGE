@@ -29,7 +29,13 @@ export const config = {
     wsUrl: useTestnet
       ? optional('PACIFICA_TESTNET_WS_URL', 'wss://test-ws.pacifica.fi')
       : optional('PACIFICA_WS_URL', 'wss://ws.pacifica.fi'),
-    apiKey: required('PACIFICA_API_KEY'),
+    /** API Config Key – self-generated from Pacifica dashboard for higher WS rate limits. Optional. */
+    apiKey: optional('PACIFICA_API_KEY', ''),
+    /** Builder code (Code Name Preference) assigned by the Pacifica builder program. */
+    builder: {
+      code: required('PACIFICA_BUILDER_CODE'),
+      feeRate: required('PACIFICA_BUILDER_FEE_RATE'),
+    },
     useTestnet,
   },
 

@@ -15,6 +15,8 @@ import extremesRouter from './routes/extremes';
 import arbitrageRouter from './routes/arbitrage';
 import accountRouter from './routes/account';
 import sentimentRouter from './routes/sentiment';
+import builderRouter from './routes/builder';
+import divergenceRouter from './routes/divergence';
 
 // ─────────────────────────────────────────────────────────────
 //  Express app
@@ -60,6 +62,8 @@ app.use('/api/v1/extremes', extremesRouter);
 app.use('/api/v1/arbitrage', arbitrageRouter);
 app.use('/api/v1/account', accountLimiter, accountRouter);
 app.use('/api/v1/sentiment', sentimentRouter);
+app.use('/api/v1/builder', builderRouter);
+app.use('/api/v1/divergence', divergenceRouter);
 
 // ── 404 catch-all ─────────────────────────────────────────────
 
@@ -81,7 +85,7 @@ initRelay(server);
 server.listen(config.port, () => {
   console.log('');
   console.log('  ╔══════════════════════════════════════╗');
-  console.log('  ║       Knights Labs Backend           ║');
+  console.log('  ║       Funding Edge Backend           ║');
   console.log('  ╚══════════════════════════════════════╝');
   console.log('');
   console.log(`  REST  →  http://localhost:${config.port}/api/v1`);

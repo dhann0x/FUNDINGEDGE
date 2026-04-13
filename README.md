@@ -1,4 +1,4 @@
-# Knights Labs
+# Funding Edge
 Real-Time Funding Rate Analytics & Arbitrage Scanner
 
 ## Structure
