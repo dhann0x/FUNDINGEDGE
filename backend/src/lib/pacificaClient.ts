@@ -3,6 +3,7 @@ import { config } from './config';
 import {
   PacificaEnvelope,
   MarketPrice,
+  FundingHistoryRecord,
   FundingHistoryResponse,
   FundingPayment,
   Position,
