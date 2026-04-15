@@ -40,17 +40,38 @@ function unwrap<T>(envelope: PacificaEnvelope<T>): T {
   return envelope.data;
 }
 
-async function get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-  try {
-    const res = await http.get<PacificaEnvelope<T>>(path, { params });
-    return unwrap(res.data);
-  } catch (err) {
-    if (err instanceof AxiosError) {
-      const msg = err.response?.data?.error ?? err.message;
-      throw new Error(`Pacifica request failed [${err.response?.status}]: ${msg}`);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof AxiosError && err.response?.status === 429 && attempt < retries) {
+        const retryAfter = parseInt(err.response.headers['retry-after'] ?? '0', 10);
+        const backoff = retryAfter > 0 ? retryAfter * 1000 : Math.min(1000 * 2 ** attempt, 8000);
+        await sleep(backoff);
+        continue;
+      }
+      throw err;
     }
-    throw err;
   }
+  throw new Error('withRetry: exceeded retries');
+}
+
+async function get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
+  return withRetry(async () => {
+    try {
+      const res = await http.get<PacificaEnvelope<T>>(path, { params });
+      return unwrap(res.data);
+    } catch (err) {
+      if (err instanceof AxiosError) {
+        const msg = err.response?.data?.error ?? err.message;
+        throw new Error(`Pacifica request failed [${err.response?.status}]: ${msg}`);
+      }
+      throw err;
+    }
+  });
 }
 
 /**
@@ -58,16 +79,18 @@ async function get<T>(path: string, params?: Record<string, unknown>): Promise<T
  * Used for paginated endpoints where next_cursor / has_more sit alongside data.
  */
 async function getRaw<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-  try {
-    const res = await http.get<T>(path, { params });
-    return res.data;
-  } catch (err) {
-    if (err instanceof AxiosError) {
-      const msg = err.response?.data?.error ?? err.message;
-      throw new Error(`Pacifica request failed [${err.response?.status}]: ${msg}`);
+  return withRetry(async () => {
+    try {
+      const res = await http.get<T>(path, { params });
+      return res.data;
+    } catch (err) {
+      if (err instanceof AxiosError) {
+        const msg = err.response?.data?.error ?? err.message;
+        throw new Error(`Pacifica request failed [${err.response?.status}]: ${msg}`);
+      }
+      throw err;
     }
-    throw err;
-  }
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
