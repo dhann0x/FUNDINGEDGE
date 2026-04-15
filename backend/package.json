@@ -1,12 +1,12 @@
 {
   "name": "knights-labs-backend",
   "version": "1.0.0",
-  "description": "Knights Labs – Real-Time Funding Rate Analytics API",
+  "description": "Knights Labs \u2013 Real-Time Funding Rate Analytics API",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "dev": "node init && ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "node init && tsc",
+    "start": "node init && node dist/server.js",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
