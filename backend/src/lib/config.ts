@@ -52,9 +52,9 @@ export const config = {
 
   // ── Cache TTLs (seconds) ──────────────────────────────────────
   cache: {
-    pricesTtl: parseInt(optional('CACHE_PRICES_TTL_S', '5'), 10),
+    pricesTtl: parseInt(optional('CACHE_PRICES_TTL_S', '30'), 10),
     marketInfoTtl: parseInt(optional('CACHE_MARKET_INFO_TTL_S', '60'), 10),
-    historyTtl: parseInt(optional('CACHE_HISTORY_TTL_S', '30'), 10),
+    historyTtl: parseInt(optional('CACHE_HISTORY_TTL_S', '300'), 10),
     sentimentTtl: parseInt(optional('CACHE_SENTIMENT_TTL_S', '120'), 10),
   },
 
