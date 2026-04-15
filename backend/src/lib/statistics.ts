@@ -178,9 +178,14 @@ export function findArbitragePairs(
     }
   }
 
-  return pairs
-    .sort((a, b) => b.spread - a.spread)
-    .slice(0, maxPairs);
+  const sorted = pairs.sort((a, b) => b.spread - a.spread).slice(0, maxPairs);
+
+  // If the threshold filtered everything out, fall back to top pairs regardless of minSpread
+  if (sorted.length === 0 && minSpread > 0) {
+    return findArbitragePairs(markets, 0, maxPairs);
+  }
+
+  return sorted;
 }
 
 // ─────────────────────────────────────────────────────────────

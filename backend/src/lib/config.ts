@@ -63,7 +63,7 @@ export const config = {
     /** |zScore| above this threshold flags a market as extreme */
     extremeZScoreThreshold: parseFloat(optional('EXTREME_Z_SCORE_THRESHOLD', '2')),
     /** Minimum hourly rate spread to surface an arbitrage pair */
-    arbitrageMinSpread: parseFloat(optional('ARBITRAGE_MIN_SPREAD', '0.0001')),
+    arbitrageMinSpread: parseFloat(optional('ARBITRAGE_MIN_SPREAD', '0.00005')),
     /** Maximum number of arbitrage pairs to return */
     arbitrageMaxPairs: parseInt(optional('ARBITRAGE_MAX_PAIRS', '20'), 10),
     /** Number of most-recent history records used to compute per-market z-score */
