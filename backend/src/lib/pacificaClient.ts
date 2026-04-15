@@ -52,6 +52,23 @@ async function get<T>(path: string, params?: Record<string, unknown>): Promise<T
   }
 }
 
+/**
+ * Like get() but returns the full top-level response object without unwrapping.
+ * Used for paginated endpoints where next_cursor / has_more sit alongside data.
+ */
+async function getRaw<T>(path: string, params?: Record<string, unknown>): Promise<T> {
+  try {
+    const res = await http.get<T>(path, { params });
+    return res.data;
+  } catch (err) {
+    if (err instanceof AxiosError) {
+      const msg = err.response?.data?.error ?? err.message;
+      throw new Error(`Pacifica request failed [${err.response?.status}]: ${msg}`);
+    }
+    throw err;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 //  Public API surface
 // ─────────────────────────────────────────────────────────────
@@ -74,7 +91,27 @@ export async function fetchFundingHistory(
 ): Promise<FundingHistoryResponse> {
   const params: Record<string, unknown> = { symbol, limit };
   if (cursor) params.cursor = cursor;
-  return get<FundingHistoryResponse>('/funding_rate/history', params);
+
+  // The Pacifica history endpoint returns pagination fields (next_cursor, has_more)
+  // at the top level alongside data — not nested inside data — so we use getRaw
+  // instead of get() to avoid unwrap() discarding those fields.
+  const raw = await getRaw<{
+    success: boolean;
+    data: FundingHistoryRecord[] | null;
+    next_cursor: string | null;
+    has_more: boolean;
+    error?: string | null;
+  }>('/funding_rate/history', params);
+
+  if (!raw.success) {
+    throw new Error(`Pacifica API error: ${raw.error ?? 'unknown'}`);
+  }
+
+  return {
+    data: raw.data ?? [],
+    next_cursor: raw.next_cursor,
+    has_more: raw.has_more,
+  };
 }
 
 /**
